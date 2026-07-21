@@ -132,7 +132,8 @@ export default function ChatView({ chat, onBack, onShowInfo, onlineUsers }: Chat
 
     setUploading(true);
     const fileExt = file.name.split('.').pop();
-    const fileName = `${Math.random().toString(36.substring(2))}-${Date.now()}.${fileExt}`;
+    const randomString = Math.random().toString(36).slice(2);
+    const fileName = `${randomString}-${Date.now()}.${fileExt}`;
     const filePath = `${chat.id}/${fileName}`;
 
     try {
