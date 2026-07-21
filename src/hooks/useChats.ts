@@ -183,13 +183,7 @@ export function useMessages(chatId: string | null) {
 
     const { data, error } = await supabase
       .from('messages')
-      .select(
-        `*,
-        sender:profiles!messages_sender_id_fkey(*),
-        reply_to:messages!messages_reply_to_id_fkey(*),
-        reactions:reactions(*),
-        reads:message_reads(*)`
-      )
+      .select('*')
       .eq('chat_id', chatId)
       .order('created_at', { ascending: true })
       .limit(200);
@@ -221,7 +215,6 @@ export function useMessages(chatId: string | null) {
             if (prev.some((m) => m.id === newMsg.id)) return prev;
             return [...prev, newMsg];
           });
-          fetchMessages();
         }
       )
       .on(
@@ -237,16 +230,6 @@ export function useMessages(chatId: string | null) {
         () => {
           fetchMessages();
         }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'reactions' },
-        () => fetchMessages()
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'message_reads' },
-        () => fetchMessages()
       )
       .subscribe();
 
@@ -379,8 +362,6 @@ export async function createGroupChat(
 
   if (chatErr || !newChat) return null;
 
-  // Insert members one at a time — RLS can't see row 1 when evaluating
-  // row 2's policy in a single batch INSERT.
   const { error: adminErr } = await supabase.from('chat_members').insert({
     chat_id: newChat.id,
     user_id: currentUserId,
