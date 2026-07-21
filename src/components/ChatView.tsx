@@ -21,6 +21,7 @@ import {
 } from '@/lib/utils';
 import Avatar from '@/components/Avatar';
 import MessageBubble from '@/components/MessageBubble';
+import CallModal from '@/components/CallModal';
 
 interface ChatViewProps {
   chat: ChatWithDetails;
@@ -47,6 +48,7 @@ export default function ChatView({ chat, onBack, onShowInfo, onlineUsers }: Chat
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [activeCallType, setActiveCallType] = useState<'audio' | 'video' | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -254,10 +256,18 @@ export default function ChatView({ chat, onBack, onShowInfo, onlineUsers }: Chat
         </button>
 
         <div className="flex items-center gap-1">
-          <button className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-colors">
+          <button
+            onClick={() => setActiveCallType('audio')}
+            className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-colors"
+            title="مكالمة صوتية"
+          >
             <Phone size={20} />
           </button>
-          <button className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-colors">
+          <button
+            onClick={() => setActiveCallType('video')}
+            className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-colors"
+            title="مكالمة فيديو"
+          >
             <Video size={20} />
           </button>
           <button
@@ -418,6 +428,16 @@ export default function ChatView({ chat, onBack, onShowInfo, onlineUsers }: Chat
           </button>
         </div>
       </div>
+
+      {/* Call Modal */}
+      {activeCallType && otherMember && (
+        <CallModal
+          chatId={chat.id}
+          recipientId={otherMember.id}
+          callType={activeCallType}
+          onClose={() => setActiveCallType(null)}
+        />
+      )}
     </div>
   );
 }
