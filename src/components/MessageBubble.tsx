@@ -74,6 +74,12 @@ export default function MessageBubble({
     {} as Record<string, typeof reactions>
   );
 
+  // Helper function to check if the attachment is a video
+  const isVideo = (url: string | null) => {
+    if (!url) return false;
+    return url.match(/\.(mp4|webm|ogg)$/i) !== null;
+  };
+
   return (
     <div
       className={`flex gap-2 group ${isOwn ? 'flex-row-reverse' : 'flex-row'} ${
@@ -125,7 +131,32 @@ export default function MessageBubble({
                 <Trash2 size={14} /> Message removed
               </span>
             ) : (
-              <p className="whitespace-pre-wrap">{message.content}</p>
+              <>
+                {/* --- Added Attachment Viewer --- */}
+                {message.attachment_url && (
+                  <div className="mb-2 max-w-[250px] sm:max-w-xs rounded-lg overflow-hidden">
+                    {isVideo(message.attachment_url) ? (
+                      <video
+                        controls
+                        className="w-full h-auto rounded-md"
+                        src={message.attachment_url}
+                      />
+                    ) : (
+                      <img
+                        src={message.attachment_url}
+                        alt="attachment"
+                        className="w-full h-auto rounded-md object-cover"
+                        loading="lazy"
+                      />
+                    )}
+                  </div>
+                )}
+                {/* ------------------------------- */}
+                
+                {message.content && (
+                   <p className="whitespace-pre-wrap">{message.content}</p>
+                )}
+              </>
             )}
 
             <div className="flex items-center gap-1 mt-0.5 -mb-0.5">
