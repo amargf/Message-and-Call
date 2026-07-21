@@ -74,7 +74,6 @@ export default function MessageBubble({
     {} as Record<string, typeof reactions>
   );
 
-  // Helper function to check if the attachment is a video
   const isVideo = (url: string | null) => {
     if (!url) return false;
     return url.match(/\.(mp4|webm|ogg)$/i) !== null;
@@ -132,9 +131,9 @@ export default function MessageBubble({
               </span>
             ) : (
               <>
-                {/* --- Added Attachment Viewer --- */}
+                {/* Attachment Viewer with optimized small size */}
                 {message.attachment_url && (
-                  <div className="mb-2 max-w-[250px] sm:max-w-xs rounded-lg overflow-hidden">
+                  <div className="mb-2 max-w-[160px] sm:max-w-[180px] rounded-lg overflow-hidden">
                     {isVideo(message.attachment_url) ? (
                       <video
                         controls
@@ -151,7 +150,6 @@ export default function MessageBubble({
                     )}
                   </div>
                 )}
-                {/* ------------------------------- */}
                 
                 {message.content && (
                    <p className="whitespace-pre-wrap">{message.content}</p>
