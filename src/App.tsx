@@ -23,18 +23,11 @@ function MessengerApp() {
   const [newGroupOpen, setNewGroupOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
-  const [mobileView, setMobileView] = useState<'list' | 'chat'>('list');
+  
+  // Removed mobileView dependency to always display both columns side-by-side
 
   const activeChat: ChatWithDetails | null =
     chats.find((c) => c.id === activeChatId) || null;
-
-  useEffect(() => {
-    if (activeChatId) {
-      setMobileView('chat');
-    } else {
-      setMobileView('list');
-    }
-  }, [activeChatId]);
 
   // Update last_seen periodically
   useEffect(() => {
@@ -49,18 +42,15 @@ function MessengerApp() {
 
   const handleSelectChat = (chatId: string) => {
     setActiveChatId(chatId);
-    setMobileView('chat');
   };
 
   const handleChatCreated = (chatId: string) => {
     refreshChats();
     setActiveChatId(chatId);
-    setMobileView('chat');
   };
 
   const handleBack = () => {
     setActiveChatId(null);
-    setMobileView('list');
   };
 
   if (loading) {
@@ -91,12 +81,8 @@ function MessengerApp() {
         {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
       </button>
 
-      {/* Sidebar */}
-      <div
-        className={`${
-          mobileView === 'list' ? 'flex' : 'hidden'
-        } md:flex w-full md:w-[360px] lg:w-[380px] shrink-0`}
-      >
+      {/* Sidebar - Always visible side-by-side */}
+      <div className="flex w-[320px] sm:w-[360px] lg:w-[380px] shrink-0 border-r border-gray-200 dark:border-gray-700">
         <Sidebar
           chats={chats}
           activeChatId={activeChatId}
@@ -108,12 +94,8 @@ function MessengerApp() {
         />
       </div>
 
-      {/* Chat view */}
-      <div
-        className={`${
-          mobileView === 'chat' ? 'flex' : 'hidden'
-        } md:flex flex-1 min-w-0`}
-      >
+      {/* Chat view - Always visible side-by-side */}
+      <div className="flex flex-1 min-w-0">
         {activeChat ? (
           <ChatView
             chat={activeChat}
