@@ -68,6 +68,35 @@ export default function ChatView({ chat, onBack, onShowInfo, onlineUsers }: Chat
       .map((p) => displayName(p));
   }, [typingUsers, members]);
 
+  // الاستماع للمكالمات الواردة في هذه المحادثة تلقائياً
+  useEffect(() => {
+    if (!user) return;
+
+    const channel = supabase
+      .channel(`chat_calls_${chat.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'calls',
+          filter: `chat_id=eq.${chat.id}`,
+        },
+        (payload) => {
+          const newCall = payload.new as any;
+          // إذا كان المستقبِل هو المستخدم الحالي والحالة معلقة
+          if (newCall && newCall.receiver_id === user.id && newCall.status === 'pending') {
+            setActiveCallType(newCall.type || 'audio');
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [chat.id, user]);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
