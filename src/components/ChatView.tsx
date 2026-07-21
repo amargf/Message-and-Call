@@ -46,9 +46,11 @@ export default function ChatView({ chat, onBack, onShowInfo, onlineUsers }: Chat
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
   const [sending, setSending] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isTypingRef = useRef(false);
 
@@ -91,8 +93,8 @@ export default function ChatView({ chat, onBack, onShowInfo, onlineUsers }: Chat
     }, 2000);
   };
 
-  const handleSend = async () => {
-    if (!input.trim() || !user || sending) return;
+  const handleSend = async (attachmentUrl?: string) => {
+    if ((!input.trim() && !attachmentUrl) || !user || sending) return;
     setSending(true);
 
     if (editingMessage) {
@@ -106,7 +108,8 @@ export default function ChatView({ chat, onBack, onShowInfo, onlineUsers }: Chat
       const { error } = await supabase.from('messages').insert({
         chat_id: chat.id,
         sender_id: user.id,
-        content: input.trim(),
+        content: input.trim() || null,
+        attachment_url: attachmentUrl || null,
         reply_to_id: replyTo?.id || null,
       });
       if (error) console.error('Send error:', error);
@@ -121,6 +124,40 @@ export default function ChatView({ chat, onBack, onShowInfo, onlineUsers }: Chat
     setReplyTo(null);
     setSending(false);
     inputRef.current?.focus();
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+
+    setUploading(true);
+    const fileExt = file.name.split('.').pop();
+    const fileName = `${Math.random().toString(36.substring(2))}-${Date.now()}.${fileExt}`;
+    const filePath = `${chat.id}/${fileName}`;
+
+    try {
+      const { error: uploadError } = await supabase.storage
+        .from('chat-attachments')
+        .upload(filePath, file);
+
+      if (uploadError) {
+        console.error('Upload error:', uploadError);
+        alert('فشل رفع الملف. تأكد من إعدادات Storage Bucket في Supabase باسم chat-attachments');
+        setUploading(false);
+        return;
+      }
+
+      const { data: publicUrlData } = supabase.storage
+        .from('chat-attachments')
+        .getPublicUrl(filePath);
+
+      await handleSend(publicUrlData.publicUrl);
+    } catch (err) {
+      console.error('Unexpected error during upload:', err);
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -156,7 +193,7 @@ export default function ChatView({ chat, onBack, onShowInfo, onlineUsers }: Chat
     if (message.sender_id === user.id) {
       await supabase
         .from('messages')
-        .update({ deleted_at: new Date().toISOString(), content: null })
+        .update({ deleted_at: new Date().toISOString(), content: null, attachment_url: null })
         .eq('id', message.id);
     }
   };
@@ -331,6 +368,13 @@ export default function ChatView({ chat, onBack, onShowInfo, onlineUsers }: Chat
 
       {/* Input */}
       <div className="px-4 py-3 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 shrink-0">
+        <input
+          type="file"
+          ref={fileInputRef}
+          onChange={handleFileUpload}
+          accept="image/*,video/*"
+          className="hidden"
+        />
         <div className="flex items-end gap-2">
           <button
             onClick={() => setShowEmojis(!showEmojis)}
@@ -338,8 +382,17 @@ export default function ChatView({ chat, onBack, onShowInfo, onlineUsers }: Chat
           >
             <Smile size={22} />
           </button>
-          <button className="p-2.5 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 transition-colors shrink-0">
-            <ImageIcon size={22} />
+          
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className="p-2.5 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 transition-colors shrink-0 disabled:opacity-50"
+          >
+            {uploading ? (
+              <div className="w-5 h-5 border-2 border-messenger-blue border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <ImageIcon size={22} />
+            )}
           </button>
 
           <div className="flex-1 bg-gray-100 dark:bg-gray-700 rounded-3xl px-4 py-2.5 flex items-end">
@@ -349,15 +402,15 @@ export default function ChatView({ chat, onBack, onShowInfo, onlineUsers }: Chat
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
               rows={1}
-              placeholder={editingMessage ? 'Edit your message...' : 'Aa'}
+              placeholder={editingMessage ? 'Edit your message...' : uploading ? 'Uploading file...' : 'Aa'}
               className="flex-1 bg-transparent text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none resize-none max-h-32 scrollbar-thin text-[15px]"
               style={{ minHeight: '24px' }}
             />
           </div>
 
           <button
-            onClick={handleSend}
-            disabled={!input.trim() || sending}
+            onClick={() => handleSend()}
+            disabled={(!input.trim() && !uploading) || sending}
             className="p-3 rounded-full bg-messenger-blue hover:bg-messenger-blue-dark text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed shrink-0 shadow-md shadow-blue-500/20"
           >
             <Send size={20} />
