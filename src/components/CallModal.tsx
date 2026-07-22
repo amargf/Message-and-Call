@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { PhoneOff, Mic, MicOff, Video, VideoOff } from 'lucide-react';
+import { PhoneOff, Mic, MicOff, Video, VideoOff, Phone } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 
@@ -12,6 +12,7 @@ interface CallModalProps {
 
 export default function CallModal({ chatId, recipientId, callType, onClose }: CallModalProps) {
   const { user } = useAuth();
+  // إذا وجدنا مكالمة معلقة واردة، نبدأ كـ 'incoming'، وإلا فنحن من يبدأ الاتصال 'calling'
   const [callStatus, setCallStatus] = useState<'calling' | 'incoming' | 'connected'>('calling');
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
@@ -27,66 +28,81 @@ export default function CallModal({ chatId, recipientId, callType, onClose }: Ca
   };
 
   useEffect(() => {
-    startCallSetup();
+    checkExistingCallOrStart();
     return () => {
       cleanup();
     };
   }, []);
 
-  const startCallSetup = async () => {
+  const checkExistingCallOrStart = async () => {
+    try {
+      // التحقق مما إذا كانت هناك مكالمة معلقة موجهة للمستخدم الحالي
+      const { data: existingCalls } = await supabase
+        .from('calls')
+        .select('*')
+        .eq('chat_id', chatId)
+        .eq('status', 'pending')
+        .neq('caller_id', user?.id)
+        .limit(1);
+
+      if (existingCalls && existingCalls.length > 0) {
+        // المستخدم هو المستقبل للمكالمة
+        const call = existingCalls[0];
+        callIdRef.current = call.id;
+        setCallStatus('incoming');
+      } else {
+        // المستخدم هو من يبدأ الاتصال
+        startCall();
+      }
+
+      // الاستماع لتحديثات المكالمة
+      const channel = supabase.channel(`call_room_${chatId}`);
+      channel
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'calls', filter: `chat_id=eq.${chatId}` },
+          async (payload) => {
+            const data = payload.new as any;
+            if (!data) return;
+
+            if (data.status === 'ended') {
+              onClose();
+            } else if (data.status === 'accepted' && peerConnection.current) {
+              if (data.answer && peerConnection.current.signalingState === 'have-local-offer') {
+                await peerConnection.current.setRemoteDescription(new RTCSessionDescription(data.answer));
+                setCallStatus('connected');
+              }
+            }
+          }
+        )
+        .subscribe();
+
+    } catch (err) {
+      console.error('Error in call setup:', err);
+    }
+  };
+
+  const startCall = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: callType === 'video',
         audio: true,
       });
       localStream.current = stream;
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-      }
+      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
 
       peerConnection.current = new RTCPeerConnection(servers);
-
-      stream.getTracks().forEach((track) => {
-        peerConnection.current?.addTrack(track, stream);
-      });
+      stream.getTracks().forEach((track) => peerConnection.current?.addTrack(track, stream));
 
       peerConnection.current.ontrack = (event) => {
-        if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = event.streams[0];
-        }
+        if (remoteVideoRef.current) remoteVideoRef.current.srcObject = event.streams[0];
       };
 
-      // إعداد قناة الاستماع للإشارات عبر Supabase Realtime
-      const channel = supabase.channel(`call_${chatId}`);
-
-      channel
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'calls', filter: `chat_id=eq.${chatId}` }, async (payload) => {
-          const data = payload.new as any;
-          if (!data || data.caller_id === user?.id) return;
-
-          if (data.status === 'accepted' && peerConnection.current?.signalingState === 'have-local-offer') {
-            if (data.answer) {
-              await peerConnection.current.setRemoteDescription(new RTCSessionDescription(data.answer));
-              setCallStatus('connected');
-            }
-          } else if (data.status === 'ended') {
-            onClose();
-          }
-        })
-        .subscribe();
-
-      // إنشاء دعوة اتصال جديدة (Offer)
       const pc = peerConnection.current;
-      pc.onicecandidate = async (event) => {
-        if (event.candidate && callIdRef.current) {
-          // حفظ المرشحين
-        }
-      };
-
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
-      const { data: callData, error } = await supabase.from('calls').insert({
+      const { data, error } = await supabase.from('calls').insert({
         chat_id: chatId,
         caller_id: user?.id,
         receiver_id: recipientId,
@@ -95,12 +111,55 @@ export default function CallModal({ chatId, recipientId, callType, onClose }: Ca
         offer: { type: offer.type, sdp: offer.sdp },
       }).select().single();
 
-      if (!error && callData) {
-        callIdRef.current = callData.id;
+      if (!error && data) {
+        callIdRef.current = data.id;
       }
-
     } catch (err) {
       console.error('Error starting call:', err);
+      onClose();
+    }
+  };
+
+  const acceptCall = async () => {
+    try {
+      setCallStatus('connected');
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: callType === 'video',
+        audio: true,
+      });
+      localStream.current = stream;
+      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+
+      peerConnection.current = new RTCPeerConnection(servers);
+      stream.getTracks().forEach((track) => peerConnection.current?.addTrack(track, stream));
+
+      peerConnection.current.ontrack = (event) => {
+        if (remoteVideoRef.current) remoteVideoRef.current.srcObject = event.streams[0];
+      };
+
+      // جلب الـ Offer الخاص بالمتصل
+      const { data: callData } = await supabase
+        .from('calls')
+        .select('*')
+        .eq('id', callIdRef.current)
+        .single();
+
+      if (callData && callData.offer) {
+        const pc = peerConnection.current;
+        await pc.setRemoteDescription(new RTCSessionDescription(callData.offer));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+
+        await supabase
+          .from('calls')
+          .update({
+            status: 'accepted',
+            answer: { type: answer.type, sdp: answer.sdp },
+          })
+          .eq('id', callIdRef.current);
+      }
+    } catch (err) {
+      console.error('Error accepting call:', err);
       onClose();
     }
   };
@@ -128,10 +187,12 @@ export default function CallModal({ chatId, recipientId, callType, onClose }: Ca
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-gray-900/90 flex flex-col items-center justify-between p-6">
+    <div className="fixed inset-0 z-50 bg-gray-900/95 flex flex-col items-center justify-between p-6">
       <div className="text-white text-center mt-6">
-        <h2 className="text-xl font-bold">
-          {callStatus === 'calling' ? 'جاري الاتصال...' : callStatus === 'connected' ? 'مكالمة جارية' : 'اتصال وارد'}
+        <h2 className="text-2xl font-bold">
+          {callStatus === 'calling' && 'جاري الاتصال...'}
+          {callStatus === 'incoming' && 'اتصال وارد...'}
+          {callStatus === 'connected' && 'مكالمة جارية'}
         </h2>
         <p className="text-gray-400 text-sm mt-1">{callType === 'video' ? 'مكالمة فيديو' : 'مكالمة صوتية'}</p>
       </div>
@@ -144,17 +205,30 @@ export default function CallModal({ chatId, recipientId, callType, onClose }: Ca
       </div>
 
       <div className="flex items-center gap-6 mb-6">
-        <button onClick={toggleMic} className={`p-4 rounded-full text-white ${isMuted ? 'bg-red-600' : 'bg-gray-700 hover:bg-gray-600'}`}>
-          {isMuted ? <MicOff size={24} /> : <Mic size={24} />}
-        </button>
-        {callType === 'video' && (
-          <button onClick={toggleVideo} className={`p-4 rounded-full text-white ${isVideoOff ? 'bg-red-600' : 'bg-gray-700 hover:bg-gray-600'}`}>
-            {isVideoOff ? <VideoOff size={24} /> : <Video size={24} />}
-          </button>
+        {callStatus === 'incoming' ? (
+          <>
+            <button onClick={acceptCall} className="p-4 rounded-full bg-green-600 hover:bg-green-700 text-white shadow-lg flex items-center gap-2 px-6">
+              <Phone size={24} /> قبول
+            </button>
+            <button onClick={onClose} className="p-4 rounded-full bg-red-600 hover:bg-red-700 text-white shadow-lg flex items-center gap-2 px-6">
+              <PhoneOff size2={24} /> رفض
+            </button>
+          </>
+        ) : (
+          <>
+            <button onClick={toggleMic} className={`p-4 rounded-full text-white ${isMuted ? 'bg-red-600' : 'bg-gray-700 hover:bg-gray-600'}`}>
+              {isMuted ? <MicOff size={24} /> : <Mic size={24} />}
+            </button>
+            {callType === 'video' && (
+              <button onClick={toggleVideo} className={`p-4 rounded-full text-white ${isVideoOff ? 'bg-red-600' : 'bg-gray-700 hover:bg-gray-600'}`}>
+                {isVideoOff ? <VideoOff size={24} /> : <Video size={24} />}
+              </button>
+            )}
+            <button onClick={onClose} className="p-4 rounded-full bg-red-600 hover:bg-red-700 text-white shadow-lg">
+              <PhoneOff size={24} />
+            </button>
+          </>
         )}
-        <button onClick={onClose} className="p-4 rounded-full bg-red-600 hover:bg-red-700 text-white shadow-lg">
-          <PhoneOff size={24} />
-        </button>
       </div>
     </div>
   );
