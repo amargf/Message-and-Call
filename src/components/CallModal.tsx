@@ -22,8 +22,13 @@ export default function CallModal({ chatId, recipientId, callType, onClose }: Ca
   const localStream = useRef<MediaStream | null>(null);
   const callIdRef = useRef<string | null>(null);
 
+  // استخدام خوادم STUN متعددة لضمان نجاح الاتصال بين الأجهزة المختلفة (هاتف وتلفاز)
   const servers = {
-    iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }],
+    iceServers: [
+      { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+      { urls: ['stun:stun2.l.google.com:19302', 'stun:stun3.l.google.com:19302'] },
+      { urls: ['stun:stun.services.mozilla.com'] },
+    ],
   };
 
   useEffect(() => {
@@ -37,7 +42,6 @@ export default function CallModal({ chatId, recipientId, callType, onClose }: Ca
     if (!user) return;
 
     try {
-      // 1. التحقق مما إذا كانت هناك مكالمة معلقة موجهة خصيصاً للمستخدم الحالي
       const { data: existingCalls } = await supabase
         .from('calls')
         .select('*')
@@ -47,16 +51,13 @@ export default function CallModal({ chatId, recipientId, callType, onClose }: Ca
         .limit(1);
 
       if (existingCalls && existingCalls.length > 0) {
-        // المستخدم هو المستقبل للمكالمة
         const call = existingCalls[0];
         callIdRef.current = call.id;
         setCallStatus('incoming');
       } else {
-        // المستخدم هو من بدأ الاتصال
         await startCall();
       }
 
-      // 2. الاستماع لتحديثات هذه المكالمة عبر Realtime
       const channel = supabase.channel(`call_room_${chatId}`);
       channel
         .on(
@@ -83,6 +84,31 @@ export default function CallModal({ chatId, recipientId, callType, onClose }: Ca
     }
   };
 
+  const setupPeerConnection = (stream: MediaStream) => {
+    const pc = new RTCPeerConnection(servers);
+    peerConnection.current = pc;
+
+    stream.getTracks().forEach((track) => {
+      pc.addTrack(track, stream);
+    });
+
+    pc.ontrack = (event) => {
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = event.streams[0];
+        // ضمان تشغيل الصوت تلقائياً وتجاوز القيود
+        remoteVideoRef.current.play().catch((e) => console.log('Audio autoplay blocked:', e));
+      }
+    };
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        // يمكن إضافة معالجة مرشحي ICE إذا لزم الأمر، لكن الـ STUN الافتراضي يكفي للربط المباشر
+      }
+    };
+
+    return pc;
+  };
+
   const startCall = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -92,14 +118,7 @@ export default function CallModal({ chatId, recipientId, callType, onClose }: Ca
       localStream.current = stream;
       if (localVideoRef.current) localVideoRef.current.srcObject = stream;
 
-      peerConnection.current = new RTCPeerConnection(servers);
-      stream.getTracks().forEach((track) => peerConnection.current?.addTrack(track, stream));
-
-      peerConnection.current.ontrack = (event) => {
-        if (remoteVideoRef.current) remoteVideoRef.current.srcObject = event.streams[0];
-      };
-
-      const pc = peerConnection.current;
+      const pc = setupPeerConnection(stream);
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
@@ -131,12 +150,7 @@ export default function CallModal({ chatId, recipientId, callType, onClose }: Ca
       localStream.current = stream;
       if (localVideoRef.current) localVideoRef.current.srcObject = stream;
 
-      peerConnection.current = new RTCPeerConnection(servers);
-      stream.getTracks().forEach((track) => peerConnection.current?.addTrack(track, stream));
-
-      peerConnection.current.ontrack = (event) => {
-        if (remoteVideoRef.current) remoteVideoRef.current.srcObject = event.streams[0];
-      };
+      const pc = setupPeerConnection(stream);
 
       const { data: callData } = await supabase
         .from('calls')
@@ -145,7 +159,6 @@ export default function CallModal({ chatId, recipientId, callType, onClose }: Ca
         .single();
 
       if (callData && callData.offer) {
-        const pc = peerConnection.current;
         await pc.setRemoteDescription(new RTCSessionDescription(callData.offer));
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
@@ -174,15 +187,21 @@ export default function CallModal({ chatId, recipientId, callType, onClose }: Ca
 
   const toggleMic = () => {
     if (localStream.current) {
-      localStream.current.getAudioTracks()[0].enabled = isMuted;
-      setIsMuted(!isMuted);
+      const audioTrack = localStream.current.getAudioTracks()[0];
+      if (audioTrack) {
+        audioTrack.enabled = isMuted;
+        setIsMuted(!isMuted);
+      }
     }
   };
 
   const toggleVideo = () => {
     if (localStream.current && callType === 'video') {
-      localStream.current.getVideoTracks()[0].enabled = isVideoOff;
-      setIsVideoOff(!isVideoOff);
+      const videoTrack = localStream.current.getVideoTracks()[0];
+      if (videoTrack) {
+        videoTrack.enabled = isVideoOff;
+        setIsVideoOff(!isVideoOff);
+      }
     }
   };
 
@@ -198,9 +217,8 @@ export default function CallModal({ chatId, recipientId, callType, onClose }: Ca
       </div>
 
       <div className="flex-1 w-full max-w-4xl flex items-center justify-center gap-4 relative overflow-hidden my-4">
-        {callType === 'video' && (
-          <video ref={remoteVideoRef} autoPlay playsInline className="w-full h-full object-cover rounded-2xl bg-black" />
-        )}
+        {/* عنصر الصوت المخفي أو مرئي للفيديو لضمان تشغيل تدفق الطرف الآخر */}
+        <video ref={remoteVideoRef} autoPlay playsInline className={callType === 'video' ? "w-full h-full object-cover rounded-2xl bg-black" : "hidden"} />
         <video ref={localVideoRef} autoPlay playsInline muted className={`absolute bottom-4 right-4 rounded-xl object-cover bg-gray-800 ${callType === 'video' ? 'w-32 h-48 border-2 border-white' : 'hidden'}`} />
       </div>
 
