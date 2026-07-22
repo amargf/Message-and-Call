@@ -12,7 +12,6 @@ interface CallModalProps {
 
 export default function CallModal({ chatId, recipientId, callType, onClose }: CallModalProps) {
   const { user } = useAuth();
-  // إذا وجدنا مكالمة معلقة واردة، نبدأ كـ 'incoming'، وإلا فنحن من يبدأ الاتصال 'calling'
   const [callStatus, setCallStatus] = useState<'calling' | 'incoming' | 'connected'>('calling');
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
@@ -28,21 +27,23 @@ export default function CallModal({ chatId, recipientId, callType, onClose }: Ca
   };
 
   useEffect(() => {
-    checkExistingCallOrStart();
+    initializeCall();
     return () => {
       cleanup();
     };
   }, []);
 
-  const checkExistingCallOrStart = async () => {
+  const initializeCall = async () => {
+    if (!user) return;
+
     try {
-      // التحقق مما إذا كانت هناك مكالمة معلقة موجهة للمستخدم الحالي
+      // 1. التحقق مما إذا كانت هناك مكالمة معلقة موجهة خصيصاً للمستخدم الحالي
       const { data: existingCalls } = await supabase
         .from('calls')
         .select('*')
         .eq('chat_id', chatId)
         .eq('status', 'pending')
-        .neq('caller_id', user?.id)
+        .eq('receiver_id', user.id)
         .limit(1);
 
       if (existingCalls && existingCalls.length > 0) {
@@ -51,11 +52,11 @@ export default function CallModal({ chatId, recipientId, callType, onClose }: Ca
         callIdRef.current = call.id;
         setCallStatus('incoming');
       } else {
-        // المستخدم هو من يبدأ الاتصال
-        startCall();
+        // المستخدم هو من بدأ الاتصال
+        await startCall();
       }
 
-      // الاستماع لتحديثات المكالمة
+      // 2. الاستماع لتحديثات هذه المكالمة عبر Realtime
       const channel = supabase.channel(`call_room_${chatId}`);
       channel
         .on(
@@ -67,8 +68,8 @@ export default function CallModal({ chatId, recipientId, callType, onClose }: Ca
 
             if (data.status === 'ended') {
               onClose();
-            } else if (data.status === 'accepted' && peerConnection.current) {
-              if (data.answer && peerConnection.current.signalingState === 'have-local-offer') {
+            } else if (data.status === 'accepted' && peerConnection.current && data.answer) {
+              if (peerConnection.current.signalingState === 'have-local-offer') {
                 await peerConnection.current.setRemoteDescription(new RTCSessionDescription(data.answer));
                 setCallStatus('connected');
               }
@@ -78,7 +79,7 @@ export default function CallModal({ chatId, recipientId, callType, onClose }: Ca
         .subscribe();
 
     } catch (err) {
-      console.error('Error in call setup:', err);
+      console.error('Error initializing call:', err);
     }
   };
 
@@ -137,7 +138,6 @@ export default function CallModal({ chatId, recipientId, callType, onClose }: Ca
         if (remoteVideoRef.current) remoteVideoRef.current.srcObject = event.streams[0];
       };
 
-      // جلب الـ Offer الخاص بالمتصل
       const { data: callData } = await supabase
         .from('calls')
         .select('*')
@@ -168,7 +168,7 @@ export default function CallModal({ chatId, recipientId, callType, onClose }: Ca
     localStream.current?.getTracks().forEach((track) => track.stop());
     peerConnection.current?.close();
     if (callIdRef.current) {
-      supabase.from('calls').update({ status: 'ended' }).eq('id', callIdRef.current);
+      supabase.from('calls').update({ status: 'ended' }).eq('id', callIdRef.current).then();
     }
   };
 
@@ -211,7 +211,7 @@ export default function CallModal({ chatId, recipientId, callType, onClose }: Ca
               <Phone size={24} /> قبول
             </button>
             <button onClick={onClose} className="p-4 rounded-full bg-red-600 hover:bg-red-700 text-white shadow-lg flex items-center gap-2 px-6">
-              <PhoneOff size2={24} /> رفض
+              <PhoneOff size={24} /> رفض
             </button>
           </>
         ) : (
